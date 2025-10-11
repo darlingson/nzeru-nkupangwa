@@ -51,6 +51,35 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+  ipcMain.handle('send-to-gemini', async (_, { apiKey, message }) => {
+    try {
+      const response = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: message }] }]
+          })
+        }
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Gemini API error:', errorText)
+        return { error: `HTTP ${response.status}: ${errorText}` }
+      }
+
+      const data = await response.json()
+      return { data }
+    } catch (err) {
+      console.error('Fetch failed:', err)
+      return { error: String(err) }
+    }
+  })
 
   createWindow()
 
