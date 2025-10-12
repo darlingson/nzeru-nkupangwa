@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, JSX } from 'react'
 import Onboarding from './pages/Onboarding'
 import ChatApp from './pages/ChatApp'
 
-export default function App() {
+export default function App(): JSX.Element {
   const [apiKey, setApiKey] = useState<string | null>(null)
 
   useEffect(() => {
-    const key = localStorage.getItem('gemini_api_key');
+    const key = localStorage.getItem('gemini_api_key')
     if (key) setApiKey(key)
   }, [])
 
