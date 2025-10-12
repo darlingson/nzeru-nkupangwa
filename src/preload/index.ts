@@ -13,6 +13,14 @@ if (process.contextIsolated) {
       sendMessageToGemini: (apiKey: string, message: string) =>
         ipcRenderer.invoke('send-to-gemini', { apiKey, message })
     })
+    contextBridge.exposeInMainWorld('chatAPI', {
+      getChats: () => ipcRenderer.invoke('get-chats'),
+      createChat: (title: string) => ipcRenderer.invoke('create-chat', title),
+      deleteChat: (chatId: number) => ipcRenderer.invoke('delete-chat', chatId),
+      getMessages: (chatId: number) => ipcRenderer.invoke('get-messages', chatId),
+      addMessage: (chatId: number, role: string, content: string) =>
+        ipcRenderer.invoke('add-message', { chatId, role, content })
+    })
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
   } catch (error) {

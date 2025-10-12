@@ -2,9 +2,88 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import Database from 'better-sqlite3'
 
+// ✅ 1️⃣ Initialize database
+const dbPath = join(app.getPath('userData'), 'chats.db')
+const db = new Database(dbPath)
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
+  );
+`)
+
+// ✅ 2️⃣ Define IPC handlers for SQLite operations
+ipcMain.handle('get-chats', () => {
+  return db.prepare('SELECT * FROM chats ORDER BY created_at DESC').all()
+})
+
+ipcMain.handle('create-chat', (_, title: string) => {
+  const stmt = db.prepare('INSERT INTO chats (title) VALUES (?)')
+  const info = stmt.run(title)
+  return { id: info.lastInsertRowid, title }
+})
+
+ipcMain.handle('delete-chat', (_, chatId: number) => {
+  db.prepare('DELETE FROM chats WHERE id = ?').run(chatId)
+  return true
+})
+
+ipcMain.handle('get-messages', (_, chatId: number) => {
+  return db.prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC').all(chatId)
+})
+
+ipcMain.handle('add-message', (_, { chatId, role, content }) => {
+  const stmt = db.prepare('INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)')
+  const info = stmt.run(chatId, role, content)
+  return { id: info.lastInsertRowid }
+})
+
+// ✅ 3️⃣ Keep your Gemini API handler below these
+ipcMain.handle('send-to-gemini', async (_, { apiKey, message }) => {
+  try {
+    const response = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: message }] }]
+        })
+      }
+    )
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Gemini API error:', errorText)
+      return { error: `HTTP ${response.status}: ${errorText}` }
+    }
+
+    const data = await response.json()
+    return { data }
+  } catch (err) {
+    console.error('Fetch failed:', err)
+    return { error: String(err) }
+  }
+})
+
+// ✅ 4️⃣ Window setup stays at the bottom
 function createWindow(): void {
-  // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
@@ -26,8 +105,6 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // HMR for renderer base on electron-vite cli.
-  // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -35,69 +112,16 @@ function createWindow(): void {
   }
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
 
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
-  ipcMain.handle('send-to-gemini', async (_, { apiKey, message }) => {
-    try {
-      const response = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: message }] }]
-          })
-        }
-      )
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Gemini API error:', errorText)
-        return { error: `HTTP ${response.status}: ${errorText}` }
-      }
-
-      const data = await response.json()
-      return { data }
-    } catch (err) {
-      console.error('Fetch failed:', err)
-      return { error: String(err) }
-    }
-  })
-
   createWindow()
-
-  app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
 })
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.
